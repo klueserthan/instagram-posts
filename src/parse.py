@@ -4,7 +4,7 @@ from typing import Dict
 def parse_comment(data: dict) -> dict:
     _stats: dict = jmespath.search(
         """{
-        comments_count: edge_media_to_parent_comment.count,
+        n_comments: edge_media_to_parent_comment.count,
         comments_disabled: comments_disabled,
         comments_next_page: edge_media_to_parent_comment.page_info.end_cursor,
         comments_has_next_page: edge_media_to_parent_comment.page_info.has_next_page
@@ -86,7 +86,6 @@ def parse_post(data: dict) -> dict:
         username: owner.username,
         caption: edge_media_to_caption.edges[].node.text,
         n_likes: edge_media_preview_like.count,
-        n_comments: edge_media_to_parent_comment.count,
         location: location.name,
         is_video: is_video,
         is_paid_partnership: is_paid_partnership,
@@ -104,11 +103,11 @@ def parse_post(data: dict) -> dict:
 
     # Media
     _type = data.get("__typename")
-    if _type == "XDTGraphImage":
+    if _type == "XDTGraphImage" or _type == "GraphImage":
         result.update({"images": [parse_image(data)]})
-    elif _type == "XDTGraphVideo":
+    elif _type == "XDTGraphVideo" or _type == "GraphVideo":
         result.update({"videos": [parse_video(data)]})
-    elif _type == "XDTGraphSidecar":
+    elif _type == "XDTGraphSidecar" or _type == "GraphSidecar":
         result.update({"images": parse_sidecar(data)})
 
     return result

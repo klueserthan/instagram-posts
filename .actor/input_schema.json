@@ -26,7 +26,12 @@
             "type": "array",
             "description": "The shortcodes of the Instagram posts to scrape",
             "editor": "json"
+        },
+        "user_ids": {
+            "title": "IDs of Instagram users",
+            "type": "array",
+            "description": "The internal ids of the Instagram posts to scrape",
+            "editor": "json"
         }
-    },
-    "required": ["shortcodes"]
+    }
 }

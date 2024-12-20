@@ -6,6 +6,7 @@ import asyncio
 from apify import Actor, ProxyConfiguration
 from typing import Dict, List
 from retry import retry
+from datetime import datetime
 from src.parse import parse_post
 
 INSTAGRAM_DOCUMENT_ID = "8845758582119845"
@@ -40,7 +41,7 @@ async def scrape_post(client: AsyncClient, shortcode: str) -> Dict:
         return None
 
 
-async def fetch_batch_with_proxy(batch: List[str], proxy_configuration: ProxyConfiguration) -> tuple[list[dict], list[str]]:
+async def fetch_post_batch_with_proxy(batch: List[str], proxy_configuration: ProxyConfiguration) -> tuple[list[dict], list[str]]:
     """Fetch a batch of shortcodes using a new proxy for each batch."""
     proxy_url = await proxy_configuration.new_url()
     proxies = {'http://': proxy_url, 'https://': proxy_url}
@@ -68,6 +69,156 @@ async def fetch_batch_with_proxy(batch: List[str], proxy_configuration: ProxyCon
 
     return results, failed
 
+async def fetch_user_with_proxy(user_id: str, proxy_configuration: ProxyConfiguration, page_size: int = 12, max_pages: int = None, from_date: str = None, max_retries: int = 3 ) -> list:
+    """
+    Fetch posts of a user using Instagram's GraphQL API.
+
+    Args:
+        user_id (str): Instagram user ID.
+        proxy_configuration (ProxyConfiguration): Proxy configuration object.
+        page_size (int): Number of posts to fetch per page.
+        max_pages (int, optional): Maximum number of pages to fetch.
+        from_date (str, optional): Fetch posts only after this date ('YYYY-MM-DD').
+        max_retries (int, optional): Maximum number of retries for failed requests per call.
+
+    Returns:
+        list: List of parsed posts.
+    """
+    posts = []
+    page_number = 1
+    variables = {"id": user_id, "first": page_size, "after": None}
+    base_url = "https://www.instagram.com/graphql/query/?query_hash=e769aa130647d2354c40ea6a439bfc08&variables="
+
+    try:
+        n_subsequent_errors = 0
+        while True:
+            proxy_url = await proxy_configuration.new_url()
+            proxies = {'http://': proxy_url, 'https://': proxy_url}
+            Actor.log.info(f"Using proxy: {proxy_url}")
+
+            try:
+                async with AsyncClient(proxies=proxies) as client:
+                    response = await client.get(base_url + quote(json.dumps(variables)))
+
+                    if response.status_code != 200:
+                        Actor.log.error(f"Failed to fetch user {user_id}. Status code: {response.status_code}")
+                        n_subsequent_errors += 1
+                        break
+                    else:
+                        n_subsequent_errors = 0
+                    
+                    data = response.json()
+                    timeline_media = data["data"]["user"]["edge_owner_to_timeline_media"]
+                    
+                    for edge in timeline_media["edges"]:
+                        # with open("junk_raw.json", "w") as f:
+                        #     json.dump(edge["node"], f, indent=4)
+                        #     break
+                        post = parse_post(edge["node"])
+
+                        # Check date condition
+                        if from_date:
+                            created_at = datetime.fromtimestamp(post.get("created_at")).strftime('%Y-%m-%d')
+                            if created_at < from_date:
+                                Actor.log.info(f"Post date {created_at} older than {from_date}. Stopping.")
+                                return posts  # Early exit on date condition
+
+                        posts.append(post)
+
+                    page_info = timeline_media["page_info"]
+                    if page_number == 1:
+                        Actor.log.info(f"Scraping total {timeline_media['count']} posts for user {user_id}")
+                    else:
+                        Actor.log.info(f"Scraping page {page_number}")
+
+                    # Check pagination conditions
+                    if not page_info["has_next_page"]:
+                        break
+                    if variables["after"] == page_info["end_cursor"]:
+                        Actor.log.warning(f"Stuck on the same cursor {variables['after']}. Breaking loop.")
+                        break
+
+                    # Update cursor and increment page number
+                    variables["after"] = page_info["end_cursor"]
+                    page_number += 1
+
+                    if max_pages and page_number > max_pages:
+                        Actor.log.info(f"Reached max pages limit: {max_pages}. Stopping.")
+                        break
+
+            except Exception as e:
+                Actor.log.error(f"Error with proxy {proxy_url}: {e}")
+                if n_subsequent_errors >= max_retries:
+                    Actor.log.error(f"Failed 3 times in a row. Stopping.")
+                    break
+                continue  # Try with a new proxy on failure
+
+    except Exception as final_error:
+        Actor.log.error(f"Unhandled error during user fetch: {final_error}")
+
+    return posts
+
+async def fetch_users_with_proxy(user_ids: List[str], proxy_configuration: ProxyConfiguration, page_size: int = 12, max_pages: int = 2, from_date: str = None, concurrency_limit: int = 10, max_retries: int = 3) -> list:
+    """
+    Fetch posts of multiple users using Instagram's GraphQL API.
+
+    Args:
+        user_ids (List[str]): List of Instagram user IDs.
+        proxy_configuration (ProxyConfiguration): Proxy configuration object.
+        page_size (int): Number of posts to fetch per page.
+        max_pages (int, optional): Maximum number of pages to fetch.
+        from_date (str, optional): Fetch posts only after this date ('YYYY-MM-DD').
+        max_retries (int, optional): Maximum number of retries for failed requests per call.
+
+    Returns:
+        list: List of parsed posts.
+    """
+    Actor.log.info(f"Processing {len(user_ids)} users (max_pages: {max_pages}; from_date: {from_date}).")
+    semaphore = asyncio.Semaphore(concurrency_limit)
+    async with semaphore:
+        tasks = [fetch_user_with_proxy(user_id, proxy_configuration, page_size, max_pages, from_date, max_retries) for user_id in user_ids]
+        results = await asyncio.gather(*tasks)
+    return results
+
+async def fetch_posts_with_proxy(shortcodes: List[str], proxy_configuration: ProxyConfiguration, batchsize: int = 10, concurrency_limit: int = 10, max_retries: int = 3) -> list:
+    Actor.log.info(f"Processing {len(shortcodes)} inputs in batches of size {batchsize}.")
+    batches = [shortcodes[i:i + batchsize] for i in range(0, len(shortcodes), batchsize)]
+    results = []
+    n_failed = len(shortcodes)
+    semaphore = asyncio.Semaphore(concurrency_limit)
+
+    async def process_batch(batch):
+        async with semaphore:
+            batch_results, failed = await fetch_post_batch_with_proxy(batch, proxy_configuration)
+            if batch_results:
+                results.extend(batch_results)
+            return failed
+
+    no_progress = 0
+    while batches:
+        tasks = [process_batch(batch) for batch in batches]
+        failed_batches = await asyncio.gather(*tasks)
+
+        # Flatten the list of failed batches and re-add them
+        failed_shortcodes = []
+        for failed_batch in failed_batches:
+            for shortcode in failed_batch:
+                failed_shortcodes.append(shortcode)
+
+        # Only continue if n_failed is decreasing
+        if len(failed_shortcodes) >= n_failed:
+            no_progress += 1
+            if no_progress == max_retries:
+                Actor.log.error("No progress after {max_retries}. Stopping.")
+                break
+        else:
+            no_progress = 0
+
+        n_failed = len(failed_shortcodes)
+        batches = [failed_shortcodes[i:i + batchsize] for i in range(0, len(failed_shortcodes), batchsize)]
+        Actor.log.info(f"Retrying {len(failed_shortcodes)} failed shortcodes.")
+    return results
+
 
 async def main() -> None:
     """Main entry point for the Apify Actor."""
@@ -76,52 +227,29 @@ async def main() -> None:
     async with Actor:
         actor_input = await Actor.get_input()
         shortcodes = actor_input.get("shortcodes", [])
+        user_ids = actor_input.get("user_ids", [])
+
+        # Either shortcodes or user_ids must be not empty
+        if not shortcodes and not user_ids:
+            Actor.log.error("Input must contain 'shortcodes' or 'user_ids'.")
+            return
+
         batchsize = actor_input.get("batchsize", 10)
         concurrency_limit = actor_input.get("concurrency_limit", 10)
         max_retries = actor_input.get("max_retries", 3)
-        Actor.log.info(f"Processing {len(shortcodes)} inputs in batches of size {batchsize}.")
 
         proxy_configuration = await Actor.create_proxy_configuration(
             groups=["RESIDENTIAL"],
             country_code="US",
         )
 
-        batches = [shortcodes[i:i + batchsize] for i in range(0, len(shortcodes), batchsize)]
         results = []
-        retries = 0
-        n_failed = len(shortcodes)
-        semaphore = asyncio.Semaphore(concurrency_limit)
-
-        async def process_batch(batch):
-            async with semaphore:
-                batch_results, failed = await fetch_batch_with_proxy(batch, proxy_configuration)
-                if batch_results:
-                    results.extend(batch_results)
-                return failed
-
-        no_progress = 0
-        while batches:
-            tasks = [process_batch(batch) for batch in batches]
-            failed_batches = await asyncio.gather(*tasks)
-
-            # Flatten the list of failed batches and re-add them
-            failed_shortcodes = []
-            for failed_batch in failed_batches:
-                for shortcode in failed_batch:
-                    failed_shortcodes.append(shortcode)
-
-            # Only continue if n_failed is decreasing
-            if len(failed_shortcodes) >= n_failed:
-                no_progress += 1
-                if no_progress == max_retries:
-                    Actor.log.error("No progress after {max_retries}. Stopping.")
-                    break
-            else:
-                no_progress = 0
-
-            n_failed = len(failed_shortcodes)
-            batches = [failed_shortcodes[i:i + batchsize] for i in range(0, len(failed_shortcodes), batchsize)]
-            Actor.log.info(f"Retrying {len(failed_shortcodes)} failed shortcodes.")
-
+        if user_ids:
+            user_results = await fetch_users_with_proxy(user_ids, proxy_configuration, concurrency_limit=concurrency_limit, max_retries=max_retries)
+            for result in user_results:
+                shortcodes.extend([i["shortcode"] for i in result])
+        if shortcodes:
+            results.extend(await fetch_posts_with_proxy(shortcodes, proxy_configuration, batchsize, concurrency_limit, max_retries))
+        
         await Actor.push_data(results)
         Actor.log.info(f"Completed processing. Total results: {len(results)}")
