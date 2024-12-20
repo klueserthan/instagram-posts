@@ -78,7 +78,7 @@ async def main() -> None:
         shortcodes = actor_input.get("shortcodes", [])
         batchsize = actor_input.get("batchsize", 10)
         concurrency_limit = actor_input.get("concurrency_limit", 10)
-        max_retries = actor_input.get("max_retries", 5)
+        max_retries = actor_input.get("max_retries", 3)
         Actor.log.info(f"Processing {len(shortcodes)} inputs in batches of size {batchsize}.")
 
         proxy_configuration = await Actor.create_proxy_configuration(
@@ -99,6 +99,7 @@ async def main() -> None:
                     results.extend(batch_results)
                 return failed
 
+        no_progress = 0
         while batches:
             tasks = [process_batch(batch) for batch in batches]
             failed_batches = await asyncio.gather(*tasks)
@@ -111,17 +112,16 @@ async def main() -> None:
 
             # Only continue if n_failed is decreasing
             if len(failed_shortcodes) >= n_failed:
-                Actor.log.error("No progress. Stopping.")
-                break
+                no_progress += 1
+                if no_progress == max_retries:
+                    Actor.log.error("No progress after {max_retries}. Stopping.")
+                    break
+            else:
+                no_progress = 0
 
             n_failed = len(failed_shortcodes)
             batches = [failed_shortcodes[i:i + batchsize] for i in range(0, len(failed_shortcodes), batchsize)]
             Actor.log.info(f"Retrying {len(failed_shortcodes)} failed shortcodes.")
-
-            retries += 1
-            if retries > max_retries:  # Limit retries
-                Actor.log.error("Too many retries. Stopping.")
-                break
 
         await Actor.push_data(results)
         Actor.log.info(f"Completed processing. Total results: {len(results)}")

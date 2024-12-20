@@ -19,7 +19,7 @@
             "title": "Max Retries",
             "type": "integer",
             "description": "The maximum number to retry fetching failed shortcodes",
-            "default": 5
+            "default": 3
         },
         "shortcodes": {
             "title": "URL of the page",
