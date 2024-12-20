@@ -9,7 +9,7 @@ https://docs.apify.com/sdk/python
 
 # HTTPX - A library for making asynchronous HTTP requests in Python. Read more at:
 # https://www.python-httpx.org/
-from httpx import AsyncClient
+from httpx import AsyncClient, ReadTimeout
 from urllib.parse import quote
 
 # JSON - A lightweight data interchange format.
@@ -23,6 +23,8 @@ from apify import Actor
 from typing import Dict
 
 import os
+
+from retry import retry
 
 from src.parse import parse_post
 
@@ -38,6 +40,7 @@ INSTAGRAM_APP_ID = "936619743392459"  # this is the public app id for instagram.
 INSTAGRAM_DOCUMENT_ID = "8845758582119845" # constant id for post documents instagram.com
 
 # Functions
+@retry(ReadTimeout, tries=3, delay=10, backoff=3, jitter=2, logger=Actor.log)
 async def scrape_post(client: AsyncClient, shortcode: str) -> Dict:
     """Scrape single Instagram post data"""
 
@@ -48,14 +51,28 @@ async def scrape_post(client: AsyncClient, shortcode: str) -> Dict:
     body = f"variables={variables}&doc_id={INSTAGRAM_DOCUMENT_ID}"
     url = "https://www.instagram.com/graphql/query"
 
-    reponse = await client.post(
+    response = await client.post(
         url=url,
         headers={"content-type": "application/x-www-form-urlencoded"},
         data=body
     )
+
+    # Check response
+    if response.status_code == 401:
+        Actor.log.error("Unauthorized.")
+        return None
+    elif not response.status_code == 200:
+        Actor.log.error(f"Failed to fetch {shortcode}.")
+        return None
+
+    data = json.loads(response.content)
+    try: 
+        data = data["data"]["xdt_shortcode_media"]
+    except KeyError:
+        Actor.log.error(f"Failed to fetch xdt_shortcode_media for {shortcode}.")
+        return None
     
-    data = json.loads(reponse.content)
-    return data["data"]["xdt_shortcode_media"]
+    return data
 
 
 async def main() -> None:
@@ -82,6 +99,8 @@ async def main() -> None:
                 data = await scrape_post(client, shortcode)
 
                 # Parse
+                if not data:
+                    continue
                 data = parse_post(data)
 
                 await Actor.push_data(data)
