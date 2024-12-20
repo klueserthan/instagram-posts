@@ -44,7 +44,7 @@ async def fetch_batch_with_proxy(batch: List[str], proxy_configuration: ProxyCon
     """Fetch a batch of shortcodes using a new proxy for each batch."""
     proxy_url = await proxy_configuration.new_url()
     proxies = {'http://': proxy_url, 'https://': proxy_url}
-    Actor.log.info(f"Using proxy: {proxy_url}")
+    #Actor.log.info(f"Using proxy: {proxy_url}")
 
     results = []
     failed = []
@@ -57,7 +57,7 @@ async def fetch_batch_with_proxy(batch: List[str], proxy_configuration: ProxyCon
 
             for shortcode, response in zip(batch, responses):
                 if isinstance(response, Exception) or not response:
-                    Actor.log.error(f"Failed to fetch shortcode {shortcode}. Re-adding to retry.")
+                    #Actor.log.error(f"Failed to fetch shortcode {shortcode}. Re-adding to retry.")
                     failed.append(shortcode)
                 else:
                     results.append(parse_post(response))
@@ -89,7 +89,7 @@ async def main() -> None:
         batches = [shortcodes[i:i + batchsize] for i in range(0, len(shortcodes), batchsize)]
         results = []
         retries = 0
-
+        n_failed = len(shortcodes)
         semaphore = asyncio.Semaphore(concurrency_limit)
 
         async def process_batch(batch):
@@ -109,7 +109,14 @@ async def main() -> None:
                 for shortcode in failed_batch:
                     failed_shortcodes.append(shortcode)
 
+            # Only continue if n_failed is decreasing
+            if len(failed_shortcodes) >= n_failed:
+                Actor.log.error("No progress. Stopping.")
+                break
+
+            n_failed = len(failed_shortcodes)
             batches = [failed_shortcodes[i:i + batchsize] for i in range(0, len(failed_shortcodes), batchsize)]
+            Actor.log.info(f"Retrying {len(failed_shortcodes)} failed shortcodes.")
 
             retries += 1
             if retries > max_retries:  # Limit retries
