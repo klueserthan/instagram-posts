@@ -7,10 +7,7 @@
             "title": "URL of the page",
             "type": "array",
             "description": "The shortcodes of the Instagram posts to scrape",
-            "editor": "json",
-            "prefill": [
-                {"shortcode": "DDu_8JtN-yR"}
-            ]
+            "editor": "json"
         }
     },
     "required": ["shortcodes"]
