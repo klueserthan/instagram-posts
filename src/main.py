@@ -92,7 +92,14 @@ async def main() -> None:
         shortcodes = actor_input.get('shortcodes')
         Actor.log.info(f"Processing {len(shortcodes)} inputs")
 
+        # Set up the proxy configuration
+        proxy_configuration = await Actor.create_proxy_configuration(
+            groups = ["RESIDENTIAL"],
+            country_code= "US",
+        )
+
         # Create an asynchronous HTTPX client for making HTTP requests.
+        Actor.log.info(f"Using proxy URL: {proxy_configuration.new_url()}")
         async with AsyncClient() as client:
             for shortcode in shortcodes: 
                 # Fetch the HTML content of the page, following redirects if necessary.
