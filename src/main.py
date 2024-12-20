@@ -1,116 +1,120 @@
-"""This module defines the main entry point for the Apify Actor.
-
-Feel free to modify this file to suit your specific needs.
-
-To build Apify Actors, utilize the Apify SDK toolkit, read more at the official documentation:
-https://docs.apify.com/sdk/python
-"""
-
-
-# HTTPX - A library for making asynchronous HTTP requests in Python. Read more at:
-# https://www.python-httpx.org/
 from httpx import AsyncClient, ReadTimeout
 from urllib.parse import quote
-
-# JSON - A lightweight data interchange format.
 import json
-
-# Apify SDK - A toolkit for building Apify Actors. Read more at:
-# https://docs.apify.com/sdk/python
-from apify import Actor
-
-# Typing
-from typing import Dict
-
 import os
-
+import asyncio
+from apify import Actor, ProxyConfiguration
+from typing import Dict, List
 from retry import retry
-
 from src.parse import parse_post
 
+INSTAGRAM_DOCUMENT_ID = "8845758582119845"
 
-# Constants
-BASE_CONFIG = {
-    # Instagram.com requires Anti Scraping Protection bypass feature.
-    # for more: https://scrapfly.io/docs/scrape-api/anti-scraping-protection
-    "asp": True,
-    "country": "US",  # change country for relevant results
-}
-INSTAGRAM_APP_ID = "936619743392459"  # this is the public app id for instagram.com
-INSTAGRAM_DOCUMENT_ID = "8845758582119845" # constant id for post documents instagram.com
-
-# Functions
-@retry(ReadTimeout, tries=3, delay=10, backoff=3, jitter=2, logger=Actor.log)
+@retry(ReadTimeout, tries=3, delay=2, backoff=2, logger=Actor.log)
 async def scrape_post(client: AsyncClient, shortcode: str) -> Dict:
-    """Scrape single Instagram post data"""
+    """Scrape single Instagram post data."""
+    variables = json.dumps({
+        'shortcode': shortcode, 
+        'fetch_tagged_user_count': None,
+        'hoisted_comment_id': None, 
+        'hoisted_reply_id': None
+    }, separators=(',', ':'))
 
-    variables = quote(json.dumps({
-        'shortcode':shortcode,'fetch_tagged_user_count':None,
-        'hoisted_comment_id':None,'hoisted_reply_id':None
-    }, separators=(',', ':')))
-    body = f"variables={variables}&doc_id={INSTAGRAM_DOCUMENT_ID}"
+    body = f"variables={quote(variables)}&doc_id={INSTAGRAM_DOCUMENT_ID}"
     url = "https://www.instagram.com/graphql/query"
-
     response = await client.post(
         url=url,
         headers={"content-type": "application/x-www-form-urlencoded"},
         data=body
     )
 
-    # Check response
-    if response.status_code == 401:
-        Actor.log.error("Unauthorized.")
-        return None
-    elif not response.status_code == 200:
-        Actor.log.error(f"Failed to fetch {shortcode}.")
+    if response.status_code != 200:
+        Actor.log.error(f"Failed to fetch {shortcode}. Status code: {response.status_code}")
         return None
 
-    data = json.loads(response.content)
-    try: 
-        data = data["data"]["xdt_shortcode_media"]
+    try:
+        data = json.loads(response.content)["data"]["xdt_shortcode_media"]
+        return data
     except KeyError:
-        Actor.log.error(f"Failed to fetch xdt_shortcode_media for {shortcode}.")
+        Actor.log.error(f"Invalid response format for shortcode {shortcode}.")
         return None
-    
-    return data
+
+
+async def fetch_batch_with_proxy(batch: List[str], proxy_configuration: ProxyConfiguration) -> tuple[list[dict], list[str]]:
+    """Fetch a batch of shortcodes using a new proxy for each batch."""
+    proxy_url = await proxy_configuration.new_url()
+    proxies = {'http://': proxy_url, 'https://': proxy_url}
+    Actor.log.info(f"Using proxy: {proxy_url}")
+
+    results = []
+    failed = []
+
+    # Async HTTP client with the current proxy
+    try:
+        async with AsyncClient(proxies=proxies) as client:
+            tasks = [scrape_post(client, shortcode) for shortcode in batch]
+            responses = await asyncio.gather(*tasks, return_exceptions=True)
+
+            for shortcode, response in zip(batch, responses):
+                if isinstance(response, Exception) or not response:
+                    Actor.log.error(f"Failed to fetch shortcode {shortcode}. Re-adding to retry.")
+                    failed.append(shortcode)
+                else:
+                    results.append(parse_post(response))
+
+    except Exception as e:
+        Actor.log.error(f"Error with proxy {proxy_url}: {e}")
+        failed.extend(batch)  # Re-add the entire batch if proxy fails
+
+    return results, failed
 
 
 async def main() -> None:
-    """Main entry point for the Apify Actor.
-
-    This coroutine is executed using `asyncio.run()`, so it must remain an asynchronous function for proper execution.
-    Asynchronous execution is required for communication with Apify platform, and it also enhances performance in
-    the field of web scraping significantly.
-    """
-
-    # Check there is a .cache directory
-    if not os.path.exists(".cache"):
-        os.mkdir(".cache")
+    """Main entry point for the Apify Actor."""
+    os.makedirs(".cache", exist_ok=True)
 
     async with Actor:
         actor_input = await Actor.get_input()
-        shortcodes = actor_input.get('shortcodes')
-        Actor.log.info(f"Processing {len(shortcodes)} inputs")
+        shortcodes = actor_input.get("shortcodes", [])
+        batchsize = actor_input.get("batchsize", 10)
+        concurrency_limit = actor_input.get("concurrency_limit", 10)
+        max_retries = actor_input.get("max_retries", 5)
+        Actor.log.info(f"Processing {len(shortcodes)} inputs in batches of size {batchsize}.")
 
-        # Set up the proxy configuration
         proxy_configuration = await Actor.create_proxy_configuration(
-            groups = ["RESIDENTIAL"],
-            country_code= "US",
+            groups=["RESIDENTIAL"],
+            country_code="US",
         )
 
-        # Create an asynchronous HTTPX client for making HTTP requests.
-        Actor.log.info(f"Using proxy URL: {proxy_configuration.new_url()}")
-        async with AsyncClient() as client:
-            for shortcode in shortcodes: 
-                # Fetch the HTML content of the page, following redirects if necessary.
-                data = await scrape_post(client, shortcode)
+        batches = [shortcodes[i:i + batchsize] for i in range(0, len(shortcodes), batchsize)]
+        results = []
+        retries = 0
 
-                # Parse
-                if not data:
-                    continue
-                data = parse_post(data)
+        semaphore = asyncio.Semaphore(concurrency_limit)
 
-                await Actor.push_data(data)
+        async def process_batch(batch):
+            async with semaphore:
+                batch_results, failed = await fetch_batch_with_proxy(batch, proxy_configuration)
+                if batch_results:
+                    results.extend(batch_results)
+                return failed
 
+        while batches:
+            tasks = [process_batch(batch) for batch in batches]
+            failed_batches = await asyncio.gather(*tasks)
 
+            # Flatten the list of failed batches and re-add them
+            failed_shortcodes = []
+            for failed_batch in failed_batches:
+                for shortcode in failed_batch:
+                    failed_shortcodes.append(shortcode)
 
+            batches = [failed_shortcodes[i:i + batchsize] for i in range(0, len(failed_shortcodes), batchsize)]
+
+            retries += 1
+            if retries > max_retries:  # Limit retries
+                Actor.log.error("Too many retries. Stopping.")
+                break
+
+        await Actor.push_data(results)
+        Actor.log.info(f"Completed processing. Total results: {len(results)}")
