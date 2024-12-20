@@ -3,6 +3,24 @@
     "type": "object",
     "schemaVersion": 1,
     "properties": {
+        "batchsize": {
+            "title": "Batch size",
+            "type": "integer",
+            "description": "The number of posts to scrape in each batch",
+            "default": 10
+        },
+        "concurrency_limit": {
+            "title": "Concurrenty Limit",
+            "type": "integer",
+            "description": "The number concurrently processed batches",
+            "default": 10
+        },
+        "max_retries": {
+            "title": "Max Retries",
+            "type": "integer",
+            "description": "The maximum number to retry fetching failed shortcodes",
+            "default": 5
+        },
         "shortcodes": {
             "title": "URL of the page",
             "type": "array",
