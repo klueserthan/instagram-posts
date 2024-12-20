@@ -45,7 +45,6 @@ def parse_sidecar(data: dict) -> dict:
     return result
 
 def parse_image(data: dict) -> dict:
-    print("parsing image")
     result: dict = jmespath.search(
         """{
             shortcode: shortcode,
@@ -61,7 +60,6 @@ def parse_image(data: dict) -> dict:
     return result
 
 def parse_video(data: dict) -> dict:
-    print("parsing video")
     result: dict = jmespath.search(
         """{
             shortcode: shortcode,
@@ -80,7 +78,6 @@ def parse_video(data: dict) -> dict:
 
 def parse_post(data: dict) -> dict:
     """Reduce post dataset to the most important fields"""
-    print("parsing post")
     result: dict = jmespath.search(
         """{
         id: id,
@@ -97,6 +94,10 @@ def parse_post(data: dict) -> dict:
     }""",
         data,
     )
+
+    # Concatenate caption
+    if len(result["caption"]) > 0:
+        result["caption"] = "\n\n".join(result["caption"])
 
     # Comments
     result.update(parse_comment(data))
