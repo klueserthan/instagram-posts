@@ -94,8 +94,8 @@ def parse_post(data: dict) -> dict:
     )
 
     # Concatenate caption
-    if len(result["caption"]) > 0:
-        result["caption"] = "\n\n".join(result["caption"])
+    caption = "\n\n".join(result.get("caption", [])).strip()
+    result["caption"] = caption
 
     # Comments
     result.update(parse_comment(data))
