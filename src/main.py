@@ -220,7 +220,7 @@ async def fetch_posts_with_proxy(shortcodes: List[str],
         Actor.log.info(f"Retrying {len(failed_shortcodes)} failed shortcode(s).")
 
     for failed_shortcode in failed_shortcodes:
-        results.append({"shortcode": failed_shortcode, "error": "NOT_FETCHED", "message": "Failed to fetch after retries."})
+        results.append({"shortcode": failed_shortcode, "error": "NOT_FETCHED", "message": f"Failed to fetch {shortcode} after retries."})
     return results
 
 
