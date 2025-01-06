@@ -14,6 +14,7 @@ def parse_comment(data: dict) -> dict:
     _comments = jmespath.search(
         """{
             comments: edge_media_to_parent_comment.edges[].node.{
+                id: id,
                 text: text,
                 created_at: created_at,
                 username: owner.username,
@@ -81,7 +82,7 @@ def parse_post(data: dict) -> dict:
         """{
         id: id,
         shortcode: shortcode,
-        post_created: taken_at_timestamp,
+        created_at: taken_at_timestamp,
         username: owner.username,
         caption: edge_media_to_caption.edges[].node.text,
         n_likes: edge_media_preview_like.count,
