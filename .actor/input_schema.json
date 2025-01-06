@@ -1,5 +1,6 @@
 {
     "title": "Scrape instagram posts",
+    "description": "To scrape Instagram posts from a list of shortcodes or user ids",
     "type": "object",
     "schemaVersion": 1,
     "properties": {
@@ -21,8 +22,21 @@
             "description": "The maximum number to retry fetching failed shortcodes",
             "default": 3
         },
+        "max_pages": {
+            "title": "Max Pages",
+            "type": "integer",
+            "description": "The maximum number of pages to scrape for each user id. -1 means no limit",
+            "default": -1
+        },
+        "earliest_post_date": {
+            "title": "Earliest Post Date",
+            "type": "string",
+            "description": "The earliest date of the posts to scrape. Scrape will stop if the post date is earlier than this date. Format: YYYY-MM-DD",
+            "default": "2024-12-01",
+            "editor": "textfield"
+        },
         "shortcodes": {
-            "title": "URL of the page",
+            "title": "Shortcodes of Instagram posts",
             "type": "array",
             "description": "The shortcodes of the Instagram posts to scrape",
             "editor": "json"

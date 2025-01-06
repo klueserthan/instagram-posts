@@ -1,5 +1,4 @@
 import jmespath
-from typing import Dict
 
 def parse_comment(data: dict) -> dict:
     _stats: dict = jmespath.search(
@@ -50,8 +49,8 @@ def parse_image(data: dict) -> dict:
             shortcode: shortcode,
             url: display_url,
             alt_text: accessibility_caption,
-            factcheck_rating: fact_chack_overall_rating,
-            factcheck_information: fact_chack_information,
+            factcheck_rating: fact_check_overall_rating,
+            factcheck_information: fact_check_information,
             sensitivitiy_information: sensitivity_friction_info
         }""",
         data
@@ -65,11 +64,11 @@ def parse_video(data: dict) -> dict:
             shortcode: shortcode,
             url: video_url,
             alt_text: accessibility_caption,
-            factcheck_rating: fact_chack_overall_rating,
-            factcheck_information: fact_chack_information,
+            factcheck_rating: fact_check_overall_rating,
+            factcheck_information: fact_check_information,
             sensitivitiy_information: sensitivity_friction_info,
             video_views: video_view_count,
-            viedeo_plays: video_play_count
+            video_plays: video_play_count
         }""",
         data
     )
