@@ -51,7 +51,7 @@ def parse_image(data: dict) -> dict:
             alt_text: accessibility_caption,
             factcheck_rating: fact_check_overall_rating,
             factcheck_information: fact_check_information,
-            sensitivitiy_information: sensitivity_friction_info
+            sensitivity_information: sensitivity_friction_info
         }""",
         data
     )
@@ -66,7 +66,7 @@ def parse_video(data: dict) -> dict:
             alt_text: accessibility_caption,
             factcheck_rating: fact_check_overall_rating,
             factcheck_information: fact_check_information,
-            sensitivitiy_information: sensitivity_friction_info,
+            sensitivity_information: sensitivity_friction_info,
             video_views: video_view_count,
             video_plays: video_play_count
         }""",
