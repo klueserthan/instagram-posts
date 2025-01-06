@@ -1,4 +1,4 @@
-from httpx import AsyncClient, ReadTimeout
+from httpx import AsyncClient, ReadTimeout, ConnectError
 from urllib.parse import quote
 import json
 import os
@@ -115,9 +115,9 @@ async def fetch_user_with_proxy(user_id: str, from_date: datetime, proxy_configu
 
                         # Check date condition
                         if from_date:
-                            post_created = datetime.fromtimestamp(post.get("post_created"))
-                            if post_created < from_date:
-                                Actor.log.info(f"Post date {post_created} older than {from_date}. {len(posts)} shortcodes in queue for user {user_id}. Stopping.")
+                            created_at = datetime.fromtimestamp(post.get("created_at"))
+                            if created_at < from_date:
+                                Actor.log.info(f"Post date {created_at} older than {from_date}. {len(posts)} shortcodes in queue for user {user_id}. Stopping.")
                                 return posts  # Early exit on date condition
 
                         posts.append(post)
@@ -143,7 +143,7 @@ async def fetch_user_with_proxy(user_id: str, from_date: datetime, proxy_configu
                         Actor.log.info(f"Reached max pages limit: {max_pages}. Stopping.")
                         break
 
-            except Exception as e:
+            except ConnectError as e:
                 Actor.log.error(f"Error with proxy {proxy_url}: {e}")
                 if n_subsequent_errors >= max_retries:
                     Actor.log.error(f"Failed 3 times in a row. Stopping.")
